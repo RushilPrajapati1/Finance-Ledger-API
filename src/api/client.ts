@@ -20,6 +20,13 @@ const API_KEY_STORAGE = 'finledger.apiKey'
 const BASE_URL_STORAGE = 'finledger.baseUrl'
 const DEFAULT_BASE_URL = '/api'
 
+// 👉 PUT YOUR API KEY HERE: web/.env.local  →  VITE_FINLEDGER_API_KEY=sk_live_...
+// Optional local-dev convenience: a key set in web/.env.local as
+// VITE_FINLEDGER_API_KEY is used as the default when nothing is saved in this
+// browser. localStorage (the Settings screen) always takes precedence, so you
+// can still override or rotate the key in the UI without touching the file.
+const ENV_API_KEY = (import.meta.env.VITE_FINLEDGER_API_KEY ?? '').trim()
+
 export class ApiError extends Error {
   code: string
   status: number
@@ -32,7 +39,7 @@ export class ApiError extends Error {
 }
 
 export function getApiKey(): string {
-  return localStorage.getItem(API_KEY_STORAGE) ?? ''
+  return localStorage.getItem(API_KEY_STORAGE) ?? ENV_API_KEY
 }
 
 export function setApiKey(key: string): void {
