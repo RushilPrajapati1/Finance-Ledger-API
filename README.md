@@ -1,5 +1,5 @@
 
-q# FinLedger — Portfolio Simulator (web)
+# FinLedger — Portfolio Simulator (web)
 
 A Vite + React client for the FinLedger double-entry backend. It holds **no
 accounting logic** of its own — every balance, transaction, and rule comes from
@@ -30,36 +30,74 @@ FINLEDGER_DATABASE_URL="$DB" .venv/bin/uvicorn app.main:app --reload
 
 ## Run the UI
 
+Put your tenant key in a gitignored `web/.env.local` (the dev proxy injects it —
+the browser never holds it):
+
+```bash
+# web/.env.local
+FINLEDGER_API_URL=http://localhost:8000
+FINLEDGER_API_KEY=sk_live_...      # from `finledger create-tenant` / `create-key`
+```
+
 ```bash
 npm install
 npm run dev          # http://localhost:5173
 ```
 
-Open the app, paste the tenant API key on the connect screen, then go to
-**Simulator → Seed demo portfolio**.
+Open the app — it loads straight in (no key prompt) — then go to **Simulator →
+Seed demo portfolio**. (A key is only entered in the UI if you point it at a
+custom backend URL in Settings.)
 
 ## Deploy (Vercel)
 
-1. Edit `vercel.json` so the rewrite `destination` points at your deployed
-   backend URL (e.g. `https://<your-app>.onrender.com/:path*`).
-2. Import this repo into Vercel — Vite is auto-detected (`npm run build` → `dist`).
-3. Set **no environment variables**: Vite inlines them into the public bundle, so
-   the API key must stay in the Settings screen (browser `localStorage`), never
-   in the build.
-4. Deploy, open the URL, and paste the tenant API key on the connect screen.
+The deployed app holds the tenant key **server-side** — the browser never sees
+it. A Vercel edge function (`api/proxy.ts`) proxies every `/api/*` request to the
+backend and injects the `X-API-Key` header from a server-only env var.
+
+1. Import this repo into Vercel — Vite is auto-detected (`npm run build` → `dist`).
+2. Set these **environment variables** (Project → Settings → Environment
+   Variables), for **both Production and Preview** — and note the names have **no
+   `VITE_` prefix**, so they are never bundled into the public JS:
+   - `FINLEDGER_API_KEY` — a tenant key (`sk_live_…`) that exists in the
+     **production (Neon)** database. *(Mint it against Neon, not your local DB:
+     `export FINLEDGER_DATABASE_URL=<Neon URL>` then `finledger create-key …`.)*
+   - `FINLEDGER_API_URL` — the backend base URL (optional; defaults to the Render
+     URL hardcoded in `api/proxy.ts`).
+3. Deploy. The site loads straight to the dashboard — **no key prompt**, because
+   the edge function authenticates for the browser.
+
+> Routing note: `vercel.json` rewrites `/api/:path* → /api/proxy?path=:path*`, and
+> the function reads the real path from the `path` query param. A `[...path].ts`
+> catch-all was tried first but only matched single-segment paths on this Vite
+> (non-Next) project (so `/api/v1/accounts` 404'd) — the single-function + rewrite
+> is the working pattern.
+
+> Access note: Vercel **Deployment Protection** (SSO) is on by default, so the
+> site is private until you disable it under Settings → Deployment Protection.
 
 See the backend README's **Deployment** section for the full Render + Neon setup.
 
 ## How it talks to the backend
 
-- The backend ships **no CORS middleware**, so the app stays same-origin and
-  calls `/api/*`:
-  - **Dev:** the Vite dev server proxies `/api` to `http://localhost:8000` (see
-    `vite.config.ts`). Override the target with `FINLEDGER_API_URL=… npm run dev`.
-  - **Production:** `vercel.json` rewrites `/api/*` to the deployed Render URL.
-    No CORS needed; nothing in the bundle points cross-origin.
-- The API key lives only in this browser's `localStorage` and is sent as the
-  `X-API-Key` header. It is never written to the repo.
+The browser always calls `/api/*` same-origin (the backend ships **no CORS
+middleware**). A **server-side proxy** sits in front and injects the tenant key,
+so the browser never holds a secret:
+
+- **Dev:** the Vite dev server proxies `/api` → `http://localhost:8000` and adds
+  the `X-API-Key` header from `FINLEDGER_API_KEY` (see `vite.config.ts`,
+  `loadEnv`). Put `FINLEDGER_API_KEY` (and optionally `FINLEDGER_API_URL`) in a
+  gitignored `web/.env.local` — **no `VITE_` prefix**, so it stays Node-side and
+  out of the bundle. Restart `npm run dev` after editing it.
+- **Production:** the Vercel edge function `api/proxy.ts` proxies `/api/*` to the
+  backend and injects `X-API-Key` from the server env var `FINLEDGER_API_KEY`.
+
+Key flow: `browser (no key) → proxy (adds X-API-Key) → backend (requires
+X-API-Key)`. The backend's auth is **unchanged** — `X-API-Key` is still required
+on every call (that's its security boundary); the proxy simply supplies it
+instead of the UI. In `src/api/client.ts`, `usesServerKey()` is true on the
+default `/api` base, so no browser key is sent; a `localStorage` key (Settings)
+is only used when pointing the app at a **custom backend URL** directly.
+
 - **Money is handled as decimal strings end-to-end** (`src/lib/money.ts`),
   using BigInt-scaled integer math — no floats, ever.
 - Every transaction POST carries an `idempotency_key`, and entries are balanced
